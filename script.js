@@ -6,6 +6,11 @@ const redoButton = document.getElementById("redoButton");
 
 const ctx = canvas.getContext("2d");
 
+
+const recognitionWorker = new Worker("recognitionWorker.js");
+let nextRequestId = 0;
+
+
 let currentStroke = [];
 const strokes = [];
 const redoStack = [];
@@ -170,4 +175,32 @@ function updateUndoRedoButtons() {
     redoButton.disabled = redoStack.length === 0;
 }
 updateUndoRedoButtons();
+
+function requestRecognition() {
+    nextRequestId++;
+
+    const requestId = nextRequestId;
+
+    recognitionWorker.postMessage({
+        type: "RECOGNIZE",
+        requestId: requestId,
+        strokes: strokes
+    });
+}
+recognitionWorker.onmessage = (event) => {
+    const result = event.data;
+
+    if (result.type !== "RECOGNITION_RESULT") {
+        return;
+    }
+
+    console.log("Main thread received:", result);
+
+    output.textContent = `Recognized: ${result.expression}`;
+};
+const recognizeButton =
+    document.getElementById("recognizeButton");
+
+recognizeButton.addEventListener("click", requestRecognition);
+
 
