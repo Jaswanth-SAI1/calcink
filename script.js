@@ -331,14 +331,10 @@ function clearCanvas() {
     updateUndoRedoButtons();
 }
 
-
 function undo() {
     invalidateRecognition();
     if (undoStack.length === 0) return;
-    
     const action = undoStack.pop();
-
-
     if (action.type === "add") {
         const index = strokes.lastIndexOf(action.stroke);
 
@@ -359,7 +355,6 @@ function undo() {
     updateUndoRedoButtons();
 }
 
-
 function redo() {
     invalidateRecognition();
     if (redoStack.length === 0) return;
@@ -373,11 +368,8 @@ function redo() {
     if (action.type === "erase") {
         strokes.splice(action.index, 1);
     }
-
     undoStack.push(action);
-
     redraw();
-
     output.textContent = `Total strokes: ${strokes.length}`;
     updateUndoRedoButtons();
 }
@@ -437,7 +429,6 @@ function requestRecognition() {
     }
 }
 
-
 recognitionWorker.onmessage = (event) => {
     const result = event.data;
 
@@ -476,8 +467,6 @@ recognitionWorker.onmessage = (event) => {
 
         recognitionPending = false;
         recognizeButton.disabled = false;
-
-    
 
         const inferenceMs = Number(result.totalMs).toFixed(1);
 
