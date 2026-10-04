@@ -8,6 +8,7 @@ const output = document.getElementById("output");
 
 const undoButton = document.getElementById("undoButton");
 const redoButton = document.getElementById("redoButton");
+const eraserButton = document.getElementById("eraserButton");
 
 const ctx = canvas.getContext("2d");
 
@@ -22,7 +23,10 @@ let nextRequestId = 0;
 
 let currentStroke = [];
 const strokes = [];
+const undoStack = [];
 const redoStack = [];
+
+let isErasing = false;
 
 canvas.addEventListener("pointerdown", startStroke);
 canvas.addEventListener("pointermove", continueStroke);
@@ -30,6 +34,17 @@ canvas.addEventListener("pointerup", endStroke);
 
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
+eraserButton.addEventListener("click", toggleEraser);
+
+function toggleEraser() {
+    isErasing = !isErasing;
+
+    if (isErasing) {
+        eraserButton.textContent = "Drawing";
+    } else {
+        eraserButton.textContent = "Eraser";
+    }
+}
 
 function getCanvasPoint(event) {
     const rect = canvas.getBoundingClientRect();
@@ -40,12 +55,99 @@ function getCanvasPoint(event) {
     };
 }
 
+function distanceToSegment(point, start, end) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+
+    if (dx === 0 && dy === 0) {
+        return Math.hypot(
+            point.x - start.x,
+            point.y - start.y
+        );
+    }
+
+    const t =
+        ((point.x - start.x) * dx +
+         (point.y - start.y) * dy) /
+        (dx * dx + dy * dy);
+
+    const clampedT = Math.max(0, Math.min(1, t));
+
+    const closestX = start.x + clampedT * dx;
+    const closestY = start.y + clampedT * dy;
+
+    return Math.hypot(
+        point.x - closestX,
+        point.y - closestY
+    );
+}
+
+function eraseStrokeAtPoint(point) {
+    const strokeIndex = findStrokeAtPoint(point);
+
+    if (strokeIndex === -1) {
+        return;
+    }
+
+    const stroke=strokes.splice(strokeIndex, 1)[0];
+
+    undoStack.push({
+    type: "erase",
+    stroke,
+    index: strokeIndex
+    });
+
+    console.log("ERASE ACTION:", undoStack);
+
+    redoStack.length = 0;
+
+    redraw();
+
+    output.textContent =
+        `Total strokes: ${strokes.length}`;
+
+    updateUndoRedoButtons();
+}
+
+function findStrokeAtPoint(point) {
+    const eraserRadius = 12;
+
+    for (let i = strokes.length - 1; i >= 0; i--) {
+        const stroke = strokes[i];
+
+        for (let j = 1; j < stroke.length; j++) {
+            const start = stroke[j - 1];
+            const end = stroke[j];
+
+            const distance = distanceToSegment(
+                point,
+                start,
+                end
+            );
+
+            if (distance <= eraserRadius) {
+                return i;
+            }
+        }
+    }
+
+    return -1;
+}
+
+
+
+
+
 function startStroke(event) {
+    const point = getCanvasPoint(event);
+
+    if (isErasing) {
+        eraseStrokeAtPoint(point);
+        return;
+    }
     currentStroke = [];
 
     canvas.setPointerCapture(event.pointerId);
-
-    const point = getCanvasPoint(event);
     currentStroke.push(point);
 }
 
@@ -65,6 +167,11 @@ function endStroke(event) {
     currentStroke.push(point);
 
     strokes.push(currentStroke);
+
+    undoStack.push({
+    type: "add",
+    stroke: currentStroke
+    });
 
     redoStack.length = 0;
 
@@ -140,11 +247,25 @@ resizeCanvas();
 
 
 function undo() {
-    if (strokes.length === 0) return;
+    if (undoStack.length === 0) return;
 
-    const stroke = strokes.pop();
+    const action = undoStack.pop();
 
-    redoStack.push(stroke);
+    console.log("UNDO ACTION:", action);
+
+    if (action.type === "add") {
+        const index = strokes.lastIndexOf(action.stroke);
+
+        if (index !== -1) {
+            strokes.splice(index, 1);
+        }
+    }
+
+    if (action.type === "erase") {
+        strokes.splice(action.index, 0, action.stroke);
+    }
+
+    redoStack.push(action);
 
     redraw();
 
@@ -157,9 +278,17 @@ function undo() {
 function redo() {
     if (redoStack.length === 0) return;
 
-    const stroke = redoStack.pop();
+    const action = redoStack.pop();
 
-    strokes.push(stroke);
+    if (action.type === "add") {
+        strokes.push(action.stroke);
+    }
+
+    if (action.type === "erase") {
+        strokes.splice(action.index, 1);
+    }
+
+    undoStack.push(action);
 
     redraw();
 
@@ -180,7 +309,7 @@ function cancelStroke(event) {
 }
 
 function updateUndoRedoButtons() {
-    undoButton.disabled = strokes.length === 0;
+    undoButton.disabled = undoStack.length === 0;
     redoButton.disabled = redoStack.length === 0;
 }
 updateUndoRedoButtons();
