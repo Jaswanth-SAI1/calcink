@@ -1,3 +1,8 @@
+import {
+    preprocessStrokes,
+    isStrokeMeaningful
+} from "ink-on/core";
+
 const canvas = document.getElementById("canvas");
 const output = document.getElementById("output");
 
@@ -7,7 +12,11 @@ const redoButton = document.getElementById("redoButton");
 const ctx = canvas.getContext("2d");
 
 
-const recognitionWorker = new Worker("recognitionWorker.js");
+const recognitionWorker = new Worker(
+    "./recognitionWorker.js",
+    { type: "module" }
+);
+
 let nextRequestId = 0;
 
 
@@ -177,30 +186,76 @@ function updateUndoRedoButtons() {
 updateUndoRedoButtons();
 
 function requestRecognition() {
-    nextRequestId++;
+    const requestId = ++nextRequestId;
 
-    const requestId = nextRequestId;
+    // Convert CalcInk's stroke format to ink-on's expected format.
+    const inkOnStrokes = strokes.map(stroke => ({
+        points: stroke,
+        lineWidth: 3
+    }));
 
-    recognitionWorker.postMessage({
-        type: "RECOGNIZE",
-        requestId: requestId,
-        strokes: strokes
-    });
-}
-recognitionWorker.onmessage = (event) => {
-    const result = event.data;
-
-    if (result.type !== "RECOGNITION_RESULT") {
+    if (!isStrokeMeaningful(inkOnStrokes)) {
+        output.textContent = "Please draw a larger expression.";
         return;
     }
 
-    console.log("Main thread received:", result);
+    // Convert strokes into model-ready image data.
+    const input = preprocessStrokes(inkOnStrokes);
 
-    output.textContent = `Recognized: ${result.expression}`;
+    console.log("ink-on preprocessing:", {
+        width: input.width,
+        height: input.height,
+        tensorLength: input.tensor.length,
+        maskWidth: input.maskWidth,
+        maskHeight: input.maskHeight,
+        maskLength: input.mask.length
+    });
+
+    recognitionWorker.postMessage({
+        type: "PREPROCESSED_INPUT",
+        requestId,
+        input
+    });
+}
+
+recognitionWorker.onmessage = (event) => {
+    const result = event.data;
+
+    if (result.requestId !== nextRequestId) {
+        return;
+    }
+
+    if (result.error) {
+        console.error("Preprocessing failed:", result.error);
+        output.textContent = `Error: ${result.error}`;
+        return;
+    }
+
+    if (result.type === "PREPROCESSING_COMPLETE") {
+        console.log("Preprocessing succeeded:", result);
+        output.textContent =
+    `Preprocessing complete. Image: ${result.width} × ${result.height}`;
+    
+        return;
+    }
+
+    if (result.type === "RECOGNITION_RESULT") {
+        console.log("Recognition result:", result);
+        output.textContent = `Recognized: ${result.expression}`;
+    }
 };
+
 const recognizeButton =
     document.getElementById("recognizeButton");
 
 recognizeButton.addEventListener("click", requestRecognition);
+
+recognitionWorker.onerror = (event) => {
+    console.error("Worker error:", event.message);
+};
+
+recognitionWorker.onmessageerror = (event) => {
+    console.error("Worker message error:", event);
+};
 
 

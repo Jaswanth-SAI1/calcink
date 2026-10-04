@@ -1,18 +1,25 @@
+import { resampleStroke } from "./recognition/preprocessing/resample.js";
+
+import {
+    rasterizeStrokes,
+    imageDataToGrayscale,
+    createImageTensor,
+    resizeImageForModel
+} from "./recognition/preprocessing/rasterize.js";
+
 self.onmessage = (event) => {
-    const { type, requestId, strokes } = event.data;
+    const { type, requestId, input } = event.data;
 
-    if (type !== "RECOGNIZE") {
-        return;
-    }
+    if (type !== "PREPROCESSED_INPUT") return;
 
-    console.log("Worker received request:", requestId);
-    console.log("Worker received strokes:", strokes);
-
-    const result = {
-        type: "RECOGNITION_RESULT",
-        requestId: requestId,
-        expression: "5 + 8 * 4"
-    };
-
-    self.postMessage(result);
+    self.postMessage({
+        type: "PREPROCESSING_COMPLETE",
+        requestId,
+        width: input.width,
+        height: input.height,
+        tensorLength: input.tensor.length,
+        maskWidth: input.maskWidth,
+        maskHeight: input.maskHeight,
+        maskLength: input.mask.length
+    });
 };
