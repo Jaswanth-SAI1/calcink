@@ -1,18 +1,21 @@
+import { evaluateExpression } from "./expressionParser.js";
+
 import {
     preprocessStrokes,
-    isStrokeMeaningful
+    isStrokeMeaningful,
 } from "ink-on/core";
 
 const canvas = document.getElementById("canvas");
 const output = document.getElementById("output");
-
 const undoButton = document.getElementById("undoButton");
 const redoButton = document.getElementById("redoButton");
 const eraserButton = document.getElementById("eraserButton");
 const clearButton = document.getElementById("clearButton");
+const recognizeButton = document.getElementById("recognizeButton");
 
-const ctx = canvas.getContext("2d");
-
+const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+});
 
 const recognitionWorker = new Worker(
     "./recognitionWorker.js",
@@ -20,7 +23,8 @@ const recognitionWorker = new Worker(
 );
 
 let nextRequestId = 0;
-
+let modelReady = false;
+let recognitionPending = false;
 
 let currentStroke = [];
 const strokes = [];
@@ -32,6 +36,7 @@ let isErasing = false;
 canvas.addEventListener("pointerdown", startStroke);
 canvas.addEventListener("pointermove", continueStroke);
 canvas.addEventListener("pointerup", endStroke);
+canvas.addEventListener("pointercancel", cancelStroke);
 
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
@@ -47,13 +52,14 @@ function toggleEraser() {
         eraserButton.textContent = "Eraser";
     }
 }
+recognizeButton.addEventListener("click", requestRecognition);
 
 function getCanvasPoint(event) {
     const rect = canvas.getBoundingClientRect();
 
     return {
         x: event.clientX - rect.left,
-        y: event.clientY - rect.top
+        y: event.clientY - rect.top,
     };
 }
 
@@ -90,7 +96,7 @@ function eraseStrokeAtPoint(point) {
     if (strokeIndex === -1) {
         return;
     }
-
+    invalidateRecognition();
     const stroke=strokes.splice(strokeIndex, 1)[0];
 
     undoStack.push({
@@ -99,7 +105,7 @@ function eraseStrokeAtPoint(point) {
     index: strokeIndex
     });
 
-    console.log("ERASE ACTION:", undoStack);
+
 
     redoStack.length = 0;
 
@@ -116,6 +122,18 @@ function findStrokeAtPoint(point) {
 
     for (let i = strokes.length - 1; i >= 0; i--) {
         const stroke = strokes[i];
+            if (stroke.length === 1) {
+                const distance = Math.hypot(
+                point.x - stroke[0].x,
+                point.y - stroke[0].y
+            );
+
+            if (distance <= eraserRadius) {
+                return i;
+            }
+
+            continue;
+        }
 
         for (let j = 1; j < stroke.length; j++) {
             const start = stroke[j - 1];
@@ -147,8 +165,8 @@ function startStroke(event) {
         eraseStrokeAtPoint(point);
         return;
     }
-    currentStroke = [];
 
+    currentStroke = [];
     canvas.setPointerCapture(event.pointerId);
     currentStroke.push(point);
 }
@@ -156,55 +174,105 @@ function startStroke(event) {
 function continueStroke(event) {
     if (currentStroke.length === 0) return;
 
-    const point = getCanvasPoint(event);
-    currentStroke.push(point);
-
+    currentStroke.push(getCanvasPoint(event));
     drawCurrentStroke();
 }
 
 function endStroke(event) {
     if (currentStroke.length === 0) return;
-
-    const point = getCanvasPoint(event);
-    currentStroke.push(point);
+    invalidateRecognition();
+    currentStroke.push(getCanvasPoint(event));
 
     strokes.push(currentStroke);
 
     undoStack.push({
-    type: "add",
-    stroke: currentStroke
+        type: "add",
+        stroke: currentStroke
     });
 
     redoStack.length = 0;
 
-    console.log("Completed stroke:", currentStroke);
-    console.log("All strokes:", strokes);
-
-    output.textContent =
-        `Total strokes: ${strokes.length}`;
-
     currentStroke = [];
 
-    canvas.releasePointerCapture(event.pointerId);
+    if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+    }
 
     updateUndoRedoButtons();
+
+    if (looksLikeEqualsAtEnd()) {
+        requestRecognition();
+    } else {
+        output.textContent = `Total strokes: ${strokes.length}`;
+    }
+}
+
+
+function looksLikeEqualsAtEnd() {
+    if (strokes.length < 2) return false;
+
+    const lastTwo = strokes.slice(-2);
+
+    function getHorizontalLine(stroke) {
+        if (stroke.length < 2) return null;
+
+        const xs = stroke.map((point) => point.x);
+        const ys = stroke.map((point) => point.y);
+
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        if (width < 12 || height > Math.max(8, width * 0.25)) {
+            return null;
+        }
+
+        return {
+            minX,
+            maxX,
+            centerY: (minY + maxY) / 2,
+            width,
+        };
+    }
+
+    const first = getHorizontalLine(lastTwo[0]);
+    const second = getHorizontalLine(lastTwo[1]);
+
+    if (!first || !second) return false;
+
+    const verticalGap = Math.abs(first.centerY - second.centerY);
+    const overlap = Math.min(first.maxX, second.maxX)
+        - Math.max(first.minX, second.minX);
+
+    return (
+        verticalGap >= 3 &&
+        verticalGap <= 40 &&
+        overlap >= Math.min(first.width, second.width) * 0.5
+    );
+}
+
+
+function cancelStroke(event) {
+    currentStroke = [];
+
+    if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+    }
 }
 
 function drawCurrentStroke() {
     if (currentStroke.length < 2) return;
 
-    const previousPoint =
-        currentStroke[currentStroke.length - 2];
-
-    const currentPoint =
-        currentStroke[currentStroke.length - 1];
+    const previousPoint = currentStroke[currentStroke.length - 2];
+    const currentPoint = currentStroke[currentStroke.length - 1];
 
     ctx.beginPath();
-
     ctx.moveTo(previousPoint.x, previousPoint.y);
-
     ctx.lineTo(currentPoint.x, currentPoint.y);
-
     ctx.stroke();
 }
 
@@ -212,7 +280,6 @@ function drawStroke(stroke) {
     if (stroke.length < 2) return;
 
     ctx.beginPath();
-
     ctx.moveTo(stroke[0].x, stroke[0].y);
 
     for (let i = 1; i < stroke.length; i++) {
@@ -232,7 +299,6 @@ function redraw() {
 
 function resizeCanvas() {
     const rect = canvas.getBoundingClientRect();
-
     const dpr = window.devicePixelRatio || 1;
 
     canvas.width = Math.round(rect.width * dpr);
@@ -244,10 +310,14 @@ function resizeCanvas() {
 }
 
 window.addEventListener("resize", resizeCanvas);
-
 resizeCanvas();
-
+function invalidateRecognition() {
+    nextRequestId++;
+    recognitionPending = false;
+    recognizeButton.disabled = false;
+}
 function clearCanvas() {
+    invalidateRecognition();
     strokes.length = 0;
     undoStack.length = 0;
     redoStack.length = 0;
@@ -262,13 +332,12 @@ function clearCanvas() {
 }
 
 
-
 function undo() {
+    invalidateRecognition();
     if (undoStack.length === 0) return;
-
+    
     const action = undoStack.pop();
 
-    console.log("UNDO ACTION:", action);
 
     if (action.type === "add") {
         const index = strokes.lastIndexOf(action.stroke);
@@ -286,13 +355,13 @@ function undo() {
 
     redraw();
 
-    output.textContent =
-        `Total strokes: ${strokes.length}`;
-
+    output.textContent = `Total strokes: ${strokes.length}`;
     updateUndoRedoButtons();
 }
 
+
 function redo() {
+    invalidateRecognition();
     if (redoStack.length === 0) return;
 
     const action = redoStack.pop();
@@ -309,35 +378,36 @@ function redo() {
 
     redraw();
 
-    output.textContent =
-        `Total strokes: ${strokes.length}`;
-
+    output.textContent = `Total strokes: ${strokes.length}`;
     updateUndoRedoButtons();
-}
-
-canvas.addEventListener("pointercancel", cancelStroke);
-
-function cancelStroke(event) {
-    currentStroke = [];
-
-    if (canvas.hasPointerCapture(event.pointerId)) {
-        canvas.releasePointerCapture(event.pointerId);
-    }
 }
 
 function updateUndoRedoButtons() {
     undoButton.disabled = undoStack.length === 0;
     redoButton.disabled = redoStack.length === 0;
 }
+
 updateUndoRedoButtons();
 
 function requestRecognition() {
-    const requestId = ++nextRequestId;
+    if (!modelReady) {
+        output.textContent = "Please wait for the model to load.";
+        return;
+    }
 
-    // Convert CalcInk's stroke format to ink-on's expected format.
-    const inkOnStrokes = strokes.map(stroke => ({
+    if (recognitionPending) {
+        output.textContent = "Recognition is already in progress.";
+        return;
+    }
+
+    if (strokes.length === 0) {
+        output.textContent = "Please draw an expression first.";
+        return;
+    }
+
+    const inkOnStrokes = strokes.map((stroke) => ({
         points: stroke,
-        lineWidth: 3
+        lineWidth: 3,
     }));
 
     if (!isStrokeMeaningful(inkOnStrokes)) {
@@ -345,63 +415,105 @@ function requestRecognition() {
         return;
     }
 
-    // Convert strokes into model-ready image data.
-    const input = preprocessStrokes(inkOnStrokes);
+    try {
+        const input = preprocessStrokes(inkOnStrokes);
+        const requestId = ++nextRequestId;
 
-    console.log("ink-on preprocessing:", {
-        width: input.width,
-        height: input.height,
-        tensorLength: input.tensor.length,
-        maskWidth: input.maskWidth,
-        maskHeight: input.maskHeight,
-        maskLength: input.mask.length
-    });
+        recognitionPending = true;
+        recognizeButton.disabled = true;
+        output.textContent = "Recognizing expression...";
 
-    recognitionWorker.postMessage({
-        type: "PREPROCESSED_INPUT",
-        requestId,
-        input
-    });
+        recognitionWorker.postMessage({
+            type: "RECOGNIZE",
+            requestId,
+            input,
+        });
+    } catch (error) {
+        console.error("Preprocessing failed:", error);
+
+        recognitionPending = false;
+        recognizeButton.disabled = false;
+        output.textContent = `Preprocessing error: ${error.message}`;
+    }
 }
+
 
 recognitionWorker.onmessage = (event) => {
     const result = event.data;
 
-    if (result.requestId !== nextRequestId) {
+    if (result.type === "MODEL_LOADING") {
+        output.textContent = "Loading handwriting model...";
         return;
     }
 
-    if (result.error) {
-        console.error("Preprocessing failed:", result.error);
-        output.textContent = `Error: ${result.error}`;
-        return;
-    }
-
-    if (result.type === "PREPROCESSING_COMPLETE") {
-        console.log("Preprocessing succeeded:", result);
+    if (result.type === "MODEL_READY") {
+        modelReady = true;
         output.textContent =
-    `Preprocessing complete. Image: ${result.width} × ${result.height}`;
-    
+            "Model ready. Draw an expression and click Recognize.";
+        return;
+    }
+
+    if (result.type === "MODEL_INIT_ERROR") {
+        modelReady = false;
+        output.textContent = `Model loading failed: ${result.error}`;
+        console.error("Model initialization failed:", result.error);
+        return;
+    }
+
+    if (result.type === "WORKER_ERROR") {
+        if (result.requestId === nextRequestId) {
+            recognitionPending = false;
+            recognizeButton.disabled = false;
+            output.textContent = `Recognition error: ${result.error}`;
+        }
+
+        console.error("Worker error:", result.error);
         return;
     }
 
     if (result.type === "RECOGNITION_RESULT") {
-        console.log("Recognition result:", result);
-        output.textContent = `Recognized: ${result.expression}`;
+        if (result.requestId !== nextRequestId) return;
+
+        recognitionPending = false;
+        recognizeButton.disabled = false;
+
+    
+
+        const inferenceMs = Number(result.totalMs).toFixed(1);
+
+        try {
+            const expression = result.expression.trim().replace(/=+$/, "").trim();
+            const evaluation = evaluateExpression(expression);
+
+            output.textContent =
+                `Recognized: ${evaluation.normalized} = ${evaluation.result} | ` +
+                `Inference: ${inferenceMs} ms`;
+        } catch (error) {
+            output.textContent =
+                `Recognized: ${result.expression} | ` +
+                `Could not calculate: ${error.message} | ` +
+                `Inference: ${inferenceMs} ms`;
+        }
     }
 };
 
-const recognizeButton =
-    document.getElementById("recognizeButton");
-
-recognizeButton.addEventListener("click", requestRecognition);
-
 recognitionWorker.onerror = (event) => {
     console.error("Worker error:", event.message);
+
+    modelReady = false;
+    recognitionPending = false;
+    recognizeButton.disabled = false;
+    output.textContent = "Worker failed. Check the browser console.";
 };
 
 recognitionWorker.onmessageerror = (event) => {
     console.error("Worker message error:", event);
+
+    recognitionPending = false;
+    recognizeButton.disabled = false;
+    output.textContent = "Could not read the Worker response.";
 };
 
+output.textContent = "Loading handwriting model...";
+recognitionWorker.postMessage({ type: "INIT" });
 
