@@ -9,6 +9,7 @@ const output = document.getElementById("output");
 const undoButton = document.getElementById("undoButton");
 const redoButton = document.getElementById("redoButton");
 const eraserButton = document.getElementById("eraserButton");
+const clearButton = document.getElementById("clearButton");
 
 const ctx = canvas.getContext("2d");
 
@@ -35,6 +36,7 @@ canvas.addEventListener("pointerup", endStroke);
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 eraserButton.addEventListener("click", toggleEraser);
+clearButton.addEventListener("click",clearCanvas);
 
 function toggleEraser() {
     isErasing = !isErasing;
@@ -244,6 +246,21 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
+
+function clearCanvas() {
+    strokes.length = 0;
+    undoStack.length = 0;
+    redoStack.length = 0;
+
+    currentStroke = [];
+
+    redraw();
+
+    output.textContent = "";
+
+    updateUndoRedoButtons();
+}
+
 
 
 function undo() {
