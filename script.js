@@ -18,7 +18,7 @@ const ctx = canvas.getContext("2d", {
 });
 
 const recognitionWorker = new Worker(
-    "./recognitionWorker.js",
+    new URL("./recognitionWorker.js", import.meta.url),
     { type: "module" }
 );
 
