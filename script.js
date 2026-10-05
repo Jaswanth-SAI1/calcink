@@ -10,6 +10,7 @@ const undoButton = document.getElementById("undoButton");
 const redoButton = document.getElementById("redoButton");
 const eraserButton = document.getElementById("eraserButton");
 const clearButton = document.getElementById("clearButton");
+const pixelEraserButton=document.getElementById("pixelEraserButton");
 
 const ctx = canvas.getContext("2d");
 
@@ -23,11 +24,15 @@ let nextRequestId = 0;
 
 
 let currentStroke = [];
+let isPointerDown = false;
 const strokes = [];
 const undoStack = [];
 const redoStack = [];
 
 let isErasing = false;
+let isPixelErasing = false;
+let pixelEraseBefore = null;
+let pixelEraseChanged = false;
 
 canvas.addEventListener("pointerdown", startStroke);
 canvas.addEventListener("pointermove", continueStroke);
@@ -37,16 +42,36 @@ undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 eraserButton.addEventListener("click", toggleEraser);
 clearButton.addEventListener("click",clearCanvas);
+pixelEraserButton.addEventListener(
+    "click",
+    togglePixelEraser
+);
 
 function toggleEraser() {
     isErasing = !isErasing;
 
     if (isErasing) {
+        isPixelErasing = false;
+
         eraserButton.textContent = "Drawing";
+        pixelEraserButton.textContent = "Pixel Eraser";
     } else {
         eraserButton.textContent = "Eraser";
     }
 }
+
+function togglePixelEraser() {
+    isPixelErasing = !isPixelErasing;
+
+    if (isPixelErasing) {
+        isErasing = false;
+        pixelEraserButton.textContent = "Drawing";
+        eraserButton.textContent = "Eraser";
+    } else {
+        pixelEraserButton.textContent = "Pixel Eraser";
+    }
+}
+
 
 function getCanvasPoint(event) {
     const rect = canvas.getBoundingClientRect();
@@ -84,6 +109,59 @@ function distanceToSegment(point, start, end) {
     );
 }
 
+function isPointNearSegment(point, start, end, radius) {
+    return distanceToSegment(point, start, end) <= radius;
+}
+
+function erasePixelsAtPoint(point) {
+    const eraserRadius = 6;
+    const updatedStrokes = [];
+    let changed = false;
+
+    for (const stroke of strokes) {
+        let currentFragment = [];
+
+        for (let i = 0; i < stroke.length - 1; i++) {
+            const start = stroke[i];
+            const end = stroke[i + 1];
+
+            const segmentErased =
+                isPointNearSegment(
+                    point,
+                    start,
+                    end,
+                    eraserRadius
+                );
+
+            if (segmentErased) {
+                changed = true;
+
+                if (currentFragment.length >= 2) {
+                    updatedStrokes.push(currentFragment);
+                }
+
+                currentFragment = [];
+            } else {
+                if (currentFragment.length === 0) {
+                    currentFragment.push(start);
+                }
+
+                currentFragment.push(end);
+            }
+        }
+
+        if (currentFragment.length >= 2) {
+            updatedStrokes.push(currentFragment);
+        }
+    }
+
+    strokes.length = 0;
+    strokes.push(...updatedStrokes);
+
+    redraw();
+
+    return changed;
+}
 function eraseStrokeAtPoint(point) {
     const strokeIndex = findStrokeAtPoint(point);
 
@@ -112,7 +190,7 @@ function eraseStrokeAtPoint(point) {
 }
 
 function findStrokeAtPoint(point) {
-    const eraserRadius = 12;
+    const eraserRadius = 6;
 
     for (let i = strokes.length - 1; i >= 0; i--) {
         const stroke = strokes[i];
@@ -143,10 +221,26 @@ function findStrokeAtPoint(point) {
 function startStroke(event) {
     const point = getCanvasPoint(event);
 
+    isPointerDown = true;
     if (isErasing) {
         eraseStrokeAtPoint(point);
         return;
     }
+
+    if (isPixelErasing) {
+
+    pixelEraseBefore = strokes.slice();
+
+    pixelEraseChanged = false;
+
+    pixelEraseChanged =
+    erasePixelsAtPoint(point) || pixelEraseChanged;
+
+    canvas.setPointerCapture(event.pointerId);
+    return;
+    }
+
+
     currentStroke = [];
 
     canvas.setPointerCapture(event.pointerId);
@@ -154,15 +248,47 @@ function startStroke(event) {
 }
 
 function continueStroke(event) {
+    const point = getCanvasPoint(event);
+
+    if (isPixelErasing) {
+        if (!isPointerDown) return;
+
+        pixelEraseChanged =
+        erasePixelsAtPoint(point) || pixelEraseChanged;
+        return;
+    }
+
     if (currentStroke.length === 0) return;
 
-    const point = getCanvasPoint(event);
     currentStroke.push(point);
 
     drawCurrentStroke();
 }
 
 function endStroke(event) {
+    isPointerDown = false;
+    if (isPixelErasing) {
+    if (pixelEraseBefore !== null && pixelEraseChanged) {
+        undoStack.push({
+            type: "pixelErase",
+            before: pixelEraseBefore,
+            after: strokes.slice()
+        });
+
+        redoStack.length = 0;
+    }
+
+    pixelEraseBefore = null;
+    pixelEraseChanged = false;
+
+    if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+    }
+
+    updateUndoRedoButtons();
+    return;
+    }
+
     if (currentStroke.length === 0) return;
 
     const point = getCanvasPoint(event);
@@ -254,6 +380,10 @@ function clearCanvas() {
 
     currentStroke = [];
 
+    isPointerDown = false;
+    pixelEraseBefore = null;
+    pixelEraseChanged = false;
+
     redraw();
 
     output.textContent = "";
@@ -282,6 +412,12 @@ function undo() {
         strokes.splice(action.index, 0, action.stroke);
     }
 
+    if (action.type === "pixelErase") {
+    strokes.length = 0;
+    strokes.push(...action.before);
+    }
+
+
     redoStack.push(action);
 
     redraw();
@@ -305,6 +441,11 @@ function redo() {
         strokes.splice(action.index, 1);
     }
 
+    if (action.type === "pixelErase") {
+    strokes.length = 0;
+    strokes.push(...action.after);
+    }
+
     undoStack.push(action);
 
     redraw();
@@ -319,6 +460,10 @@ canvas.addEventListener("pointercancel", cancelStroke);
 
 function cancelStroke(event) {
     currentStroke = [];
+
+    isPointerDown = false;
+    pixelEraseBefore = null;
+    pixelEraseChanged = false;
 
     if (canvas.hasPointerCapture(event.pointerId)) {
         canvas.releasePointerCapture(event.pointerId);
