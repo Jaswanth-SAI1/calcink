@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CalcInk Parser Tests</title>
+</head>
+<body>
+  <h1>Expression Parser Tests</h1>
+  <pre id="results">Running tests...</pre>
+
+  <script type="module">
+    import { evaluateExpression } from "./expressionParser.js";
+
+    const tests = [
+      { input: "8 / 0", expectedError: "Division by zero" },
+      { input: "-5 + 2", expected: -3 },
+      { input: "2.5 + 1.5", expected: 4 },
+      { input: "3 + =", expectedError: "invalid" },
+      { input: "12 + 7", expected: 19 },
+    ];
+
+    const results = tests.map(test => {
+      try {
+        const actual = evaluateExpression(test.input);
+
+        if (test.expectedError) {
+          return `FAIL: ${test.input} — expected an error`;
+        }
+
+        return actual.result === test.expected
+          ? `PASS: ${test.input} = ${actual.result}`
+          : `FAIL: ${test.input} — got ${actual.result}`;
+      } catch (error) {
+        if (
+          test.expectedError &&
+          error.message.toLowerCase().includes(
+            test.expectedError.toLowerCase()
+          )
+        ) {
+          return `PASS: ${test.input} — ${error.message}`;
+        }
+
+        return `FAIL: ${test.input} — ${error.message}`;
+      }
+    });
+
+    document.getElementById("results").textContent =
+      results.join("\\n");
+  </script>
+</body>
+</html>

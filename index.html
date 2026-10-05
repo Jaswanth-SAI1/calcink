@@ -1,40 +1,452 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>CalcInk - Pointer Test</title>
-
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+        name="description"
+        content="CalcInk — write mathematical expressions by hand and calculate instantly."
+    />
+    <meta name="theme-color" content="#f7f8fc" />
+    <title>CalcInk — Handwritten Math Calculator</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
     <style>
-        canvas {
-            width: 800px;
-            height: 500px;
-            border: 1px solid black;
+        :root {
+            font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+            color: #172033;
+            background: #f7f8fc;
+            font-synthesis: none;
+            text-rendering: optimizeLegibility;
+            -webkit-font-smoothing: antialiased;
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --border: #e2e6ef;
+            --muted: #647087;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-width: 320px;
+            min-height: 100vh;
+        }
+
+        button {
+            font: inherit;
+            cursor: pointer;
+        }
+
+        button:focus-visible {
+            outline: 3px solid #a5b4fc;
+            outline-offset: 3px;
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.42;
+        }
+
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 18px clamp(16px, 5vw, 64px);
+            background: #ffffff;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-mark {
+            display: grid;
+            place-items: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 13px;
+            color: white;
+            background: var(--primary);
+            font-size: 25px;
+            font-weight: 750;
+        }
+
+        .brand-name {
+            margin: 0;
+            font-size: 23px;
+            font-weight: 750;
+            letter-spacing: -0.8px;
+        }
+
+        .brand-subtitle {
+            margin: 3px 0 0;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .offline-label {
+            padding: 7px 11px;
+            border: 1px solid #ccebd9;
+            border-radius: 999px;
+            background: #f0fbf4;
+            color: #217346;
+            font-size: 12px;
+            font-weight: 650;
+            white-space: nowrap;
+        }
+
+        main {
+            width: min(100% - 32px, 1000px);
+            margin: 36px auto 48px;
+        }
+
+        .intro {
+            margin-bottom: 22px;
+        }
+
+        .intro h2 {
+            margin: 0 0 8px;
+            font-size: clamp(24px, 4vw, 32px);
+            letter-spacing: -1px;
+        }
+
+        .intro p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .workspace {
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            background: white;
+            box-shadow: 0 12px 35px rgb(25 35 70 / 6%);
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            background: #fff;
+        }
+
+        .tool-group {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .tool-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            min-height: 40px;
+            padding: 9px 13px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: white;
+            color: #344056;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 120ms ease, border-color 120ms ease;
+        }
+
+        .tool-button:hover:not(:disabled) {
+            background: #f4f5fa;
+            border-color: #cbd2e0;
+        }
+
+        .tool-button.active {
+            color: #4338ca;
+            background: #eef2ff;
+            border-color: #c7d2fe;
+        }
+
+        .tool-button.primary {
+            color: white;
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .tool-button.primary:hover:not(:disabled) {
+            background: var(--primary-hover);
+        }
+
+        .tool-button .symbol {
+            font-size: 17px;
+            line-height: 1;
+        }
+
+        .canvas-section {
+            padding: 16px;
+            background: #fcfcff;
+        }
+
+        .canvas-hint {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 0 0 10px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .canvas-frame {
+            overflow: hidden;
+            border: 1px solid #dfe3ed;
+            border-radius: 12px;
+            background: white;
+        }
+
+        #canvas {
+            display: block;
+            width: 100%;
+            height: clamp(320px, 54vh, 560px);
+            border: 0;
+            background-color: #ffffff;
+            touch-action: none;
+            cursor: crosshair;
+        }
+
+        #canvas.eraser-mode {
+            cursor: cell;
+        }
+
+        .result-section {
+            padding: 18px 20px 20px;
+            border-top: 1px solid var(--border);
+            background: white;
+        }
+
+        .result-heading {
+            margin: 0 0 10px;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 750;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        #output {
+            min-height: 28px;
+            margin: 0;
+            color: #344056;
+            font-size: 14px;
+            line-height: 1.7;
+            overflow-wrap: anywhere;
+        }
+
+        .footer {
+            padding: 24px 12px 0;
+            color: #8790a2;
+            text-align: center;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+
+        @media (max-width: 600px) {
+            .app-header {
+                padding: 14px 16px;
+            }
+
+            .brand-mark {
+                width: 39px;
+                height: 39px;
+            }
+
+            .brand-name {
+                font-size: 20px;
+            }
+
+            .brand-subtitle {
+                font-size: 11px;
+            }
+
+            .offline-label {
+                padding: 6px 8px;
+                font-size: 10px;
+            }
+
+            main {
+                width: calc(100% - 20px);
+                margin-top: 24px;
+            }
+
+            .toolbar {
+                align-items: stretch;
+                padding: 12px;
+            }
+
+            .tool-group {
+                width: 100%;
+            }
+
+            .tool-button {
+                flex: 1;
+                padding: 9px 10px;
+                font-size: 12px;
+            }
+
+            .canvas-section {
+                padding: 10px;
+            }
+
+            #canvas {
+                height: 48vh;
+                min-height: 300px;
+                max-height: 460px;
+            }
+
+            .result-section {
+                padding: 16px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
 
 <body>
+    <header class="app-header">
+        <div class="brand">
+            <div class="brand-mark" aria-hidden="true">∑</div>
+            <div>
+                <h1 class="brand-name">CalcInk</h1>
+                <p class="brand-subtitle">Handwritten Math Calculator</p>
+            </div>
+        </div>
+        <span class="offline-label">On-device AI</span>
+    </header>
 
-    <h1>Pointer Test</h1>
-    <div>
-        <button id="recognizeButton">Recognize</button> 
-        <button id="eraserButton">Eraser</button>
-        <button id="clearButton">Clear Canvas</button>
-        <button id="pixelEraserButton">Pixel Eraser</button>
-    </div>
-    <div>
-        <button id="undoButton">↶ Undo</button>
-        <button id="redoButton">↷ Redo</button>
-    </div>
 
-    <canvas id="canvas"></canvas>
+    <main>
+        <section class="intro">
+            <h2>Your handwriting, calculated.</h2>
+            <p>Write a mathematical expression, add an equals sign, and let CalcInk do the math.</p>
+        </section>
 
-    <p id="output">Press somewhere on the canvas.</p>
+        <section class="workspace" aria-label="Math workspace">
+            <div class="toolbar">
+                <div class="tool-group">
+                    <button
+                        type="button"
+                        id="undoButton"
+                        class="tool-button"
+                        aria-label="Undo last action"
+                        title="Undo"
+                    >
+                        <span class="symbol" aria-hidden="true">↶</span>
+                        Undo
+                    </button>
+
+                    <button
+                        type="button"
+                        id="redoButton"
+                        class="tool-button"
+                        aria-label="Redo last action"
+                        title="Redo"
+                    >
+                        <span class="symbol" aria-hidden="true">↷</span>
+                        Redo
+                    </button>
+
+                    <button
+                        type="button"
+                        id="eraserButton"
+                        class="tool-button"
+                        aria-pressed="false"
+                    >
+                        <span class="symbol" aria-hidden="true">⌫</span>
+                        Eraser
+                    </button>
+                </div>
+                <div class="tool-group">
+                    <button
+                        type="button"
+                        id="pixelEraserButton"
+                        class="tool-button"
+                        aria-pressed="false"
+                    >
+                        Pixel Eraser
+                    </button>
+
+                    <button
+                        type="button"
+                        id="clearButton"
+                        class="tool-button"
+                    >
+                        Clear
+                    </button>
+
+                    <button
+                        type="button"
+                        id="recognizeButton"
+                        class="tool-button primary"
+                    >
+                        <span class="symbol" aria-hidden="true">⌗</span>
+                            Recognize
+                    </button>
+                </div>
+            </div>
+
+        <div class="stroke-width-control">
+            <label for="strokeWidthSlider">Stroke width</label>
+            <input
+                id="strokeWidthSlider"
+                type="range"
+                min="1"
+                max="8"
+                step="0.5"
+                value="3"
+            />
+            <span id="strokeWidthValue">3 px</span>
+        </div>
+
+            <div class="canvas-section">
+                <div class="canvas-hint">
+                    <span>Writing area</span>
+                    <span>Mouse · Touch · Stylus</span>
+                </div>
+
+                <div class="canvas-frame">
+                    <canvas
+                        id="canvas"
+                        aria-label="Handwriting canvas for mathematical expressions"
+                    ></canvas>
+                </div>
+            </div>
+
+            <section class="result-section" aria-live="polite" aria-atomic="true">
+                <h2 class="result-heading">Recognition &amp; result</h2>
+                <p id="output">Loading handwriting model...</p>
+            </section>
+        </section>
+
+        <footer class="footer">
+            CalcInk · Handwriting recognition runs on your device after the model loads.
+        </footer>
+    </main>
 
     <script type="module" src="/script.js"></script>
-    
-    <script
-        type="module"
-        src="recognition/preprocessing/testRasterize.js">
-    </script>
 </body>
 </html>
