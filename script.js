@@ -7,11 +7,17 @@ import {
 
 const canvas = document.getElementById("canvas");
 const output = document.getElementById("output");
+const recognizeButton = document.getElementById("recognizeButton");
 const undoButton = document.getElementById("undoButton");
 const redoButton = document.getElementById("redoButton");
 const eraserButton = document.getElementById("eraserButton");
 const clearButton = document.getElementById("clearButton");
-const recognizeButton = document.getElementById("recognizeButton");
+const strokeWidthSlider = document.getElementById("strokeWidthSlider");
+const strokeWidthValue = document.getElementById("strokeWidthValue");
+
+strokeWidthSlider.addEventListener("input", () => {
+    strokeWidthValue.textContent = `${strokeWidthSlider.value} px`;
+});
 
 const ctx = canvas.getContext("2d", {
     willReadFrequently: true
@@ -29,7 +35,7 @@ let recognitionPending = false;
 
 // Stores the answer to render beside the handwritten expression.
 let inlineResult = null;
-
+let currentStrokeWidth = 3;
 let expressionSubmitted = false;
 let autoRecognitionTimer = null;
 
@@ -174,13 +180,18 @@ function startStroke(event) {
         eraseStrokeAtPoint(point);
         return;
     }
+
     inlineResult = null;
-    redraw();
     currentStroke = [];
+    currentStrokeWidth = Number(strokeWidthSlider.value);
+
+    ctx.lineWidth = currentStrokeWidth;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
     canvas.setPointerCapture(event.pointerId);
     currentStroke.push(point);
 }
-
 function continueStroke(event) {
     if (currentStroke.length === 0) return;
 
@@ -193,6 +204,7 @@ function endStroke(event) {
     invalidateRecognition();
     currentStroke.push(getCanvasPoint(event));
 
+    currentStroke.lineWidth = currentStrokeWidth;
     strokes.push(currentStroke);
 
     undoStack.push({
@@ -284,14 +296,27 @@ function drawCurrentStroke() {
     const previousPoint = currentStroke[currentStroke.length - 2];
     const currentPoint = currentStroke[currentStroke.length - 1];
 
+    ctx.save();
+    ctx.lineWidth = currentStrokeWidth;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
     ctx.beginPath();
     ctx.moveTo(previousPoint.x, previousPoint.y);
     ctx.lineTo(currentPoint.x, currentPoint.y);
     ctx.stroke();
+
+    ctx.restore();
 }
 
 function drawStroke(stroke) {
     if (stroke.length < 2) return;
+
+    ctx.save();
+    ctx.strokeStyle = "#222222";
+    ctx.lineWidth = stroke.lineWidth ?? 3;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
 
     ctx.beginPath();
     ctx.moveTo(stroke[0].x, stroke[0].y);
@@ -301,6 +326,7 @@ function drawStroke(stroke) {
     }
 
     ctx.stroke();
+    ctx.restore();
 }
 
 function findEqualsPosition() {
@@ -501,7 +527,7 @@ function requestRecognition() {
 
     const inkOnStrokes = strokes.map((stroke) => ({
         points: stroke,
-        lineWidth: 3,
+        lineWidth: stroke.lineWidth ?? 3,
     }));
 
     if (!isStrokeMeaningful(inkOnStrokes)) {
