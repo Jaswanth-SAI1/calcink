@@ -22,9 +22,16 @@ const recognitionWorker = new Worker(
     { type: "module" }
 );
 
+
 let nextRequestId = 0;
 let modelReady = false;
 let recognitionPending = false;
+
+// Stores the answer to render beside the handwritten expression.
+let inlineResult = null;
+
+let expressionSubmitted = false;
+let autoRecognitionTimer = null;
 
 let currentStroke = [];
 const strokes = [];
@@ -104,17 +111,23 @@ function eraseStrokeAtPoint(point) {
     stroke,
     index: strokeIndex
     });
-
-
-
     redoStack.length = 0;
-
     redraw();
-
     output.textContent =
         `Total strokes: ${strokes.length}`;
 
     updateUndoRedoButtons();
+    scheduleAutoRecognition();
+
+    if (expressionSubmitted) {
+        clearTimeout(autoRecognitionTimer);
+
+        if (looksLikeEqualsAtEnd()) {
+            scheduleAutoRecognition();
+        } else {
+            expressionSubmitted = false;
+        }
+    }
 }
 
 function findStrokeAtPoint(point) {
@@ -154,10 +167,6 @@ function findStrokeAtPoint(point) {
     return -1;
 }
 
-
-
-
-
 function startStroke(event) {
     const point = getCanvasPoint(event);
 
@@ -165,7 +174,8 @@ function startStroke(event) {
         eraseStrokeAtPoint(point);
         return;
     }
-
+    inlineResult = null;
+    redraw();
     currentStroke = [];
     canvas.setPointerCapture(event.pointerId);
     currentStroke.push(point);
@@ -201,7 +211,11 @@ function endStroke(event) {
     updateUndoRedoButtons();
 
     if (looksLikeEqualsAtEnd()) {
-        requestRecognition();
+        expressionSubmitted = true;
+    }
+
+    if (expressionSubmitted) {
+    scheduleAutoRecognition();
     } else {
         output.textContent = `Total strokes: ${strokes.length}`;
     }
@@ -289,13 +303,25 @@ function drawStroke(stroke) {
     ctx.stroke();
 }
 
+
 function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     for (const stroke of strokes) {
         drawStroke(stroke);
     }
+
+    // Redraw the answer after the handwriting.
+    if (inlineResult !== null) {
+    ctx.save();
+    ctx.fillStyle = "#4f46e5";
+    ctx.font = "600 24px sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`= ${inlineResult}`, 24, 60);
+    ctx.restore();
 }
+}
+
 
 function resizeCanvas() {
     const rect = canvas.getBoundingClientRect();
@@ -318,16 +344,18 @@ function invalidateRecognition() {
 }
 function clearCanvas() {
     invalidateRecognition();
+    expressionSubmitted = false;
+    clearTimeout(autoRecognitionTimer);
     strokes.length = 0;
+    currentStroke = [];
     undoStack.length = 0;
     redoStack.length = 0;
 
-    currentStroke = [];
+    inlineResult = null;
 
     redraw();
 
     output.textContent = "";
-
     updateUndoRedoButtons();
 }
 
@@ -382,6 +410,7 @@ function updateUndoRedoButtons() {
 updateUndoRedoButtons();
 
 function requestRecognition() {
+    if (currentStroke.length > 0) return;
     if (!modelReady) {
         output.textContent = "Please wait for the model to load.";
         return;
@@ -473,11 +502,14 @@ recognitionWorker.onmessage = (event) => {
         try {
             const expression = result.expression.trim().replace(/=+$/, "").trim();
             const evaluation = evaluateExpression(expression);
-
+            inlineResult = evaluation.result;
+            redraw();
             output.textContent =
                 `Recognized: ${evaluation.normalized} = ${evaluation.result} | ` +
                 `Inference: ${inferenceMs} ms`;
         } catch (error) {
+            inlineResult = null;
+            redraw();
             output.textContent =
                 `Recognized: ${result.expression} | ` +
                 `Could not calculate: ${error.message} | ` +
@@ -506,3 +538,12 @@ recognitionWorker.onmessageerror = (event) => {
 output.textContent = "Loading handwriting model...";
 recognitionWorker.postMessage({ type: "INIT" });
 
+function scheduleAutoRecognition() {
+    if (!expressionSubmitted) return;
+
+    clearTimeout(autoRecognitionTimer);
+
+    autoRecognitionTimer = setTimeout(() => {
+        requestRecognition();
+    }, 600);
+}
