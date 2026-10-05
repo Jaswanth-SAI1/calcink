@@ -303,6 +303,71 @@ function drawStroke(stroke) {
     ctx.stroke();
 }
 
+function findEqualsPosition() {
+    const horizontalLines = [];
+
+    for (let i = 0; i < strokes.length; i++) {
+        const stroke = strokes[i];
+        if (stroke.length < 2) continue;
+
+        const xs = stroke.map((p) => p.x);
+        const ys = stroke.map((p) => p.y);
+
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        if (width >= 12 && height <= Math.max(8, width * 0.25)) {
+            horizontalLines.push({
+                minX,
+                maxX,
+                centerY: (minY + maxY) / 2,
+                width,
+            });
+        }
+    }
+
+    let bestPair = null;
+
+    for (let i = 0; i < horizontalLines.length; i++) {
+        for (let j = i + 1; j < horizontalLines.length; j++) {
+            const a = horizontalLines[i];
+            const b = horizontalLines[j];
+
+            const verticalGap = Math.abs(a.centerY - b.centerY);
+            const overlap =
+                Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
+
+            if (
+                verticalGap < 3 ||
+                verticalGap > 40 ||
+                overlap < Math.min(a.width, b.width) * 0.5
+            ) {
+                continue;
+            }
+
+            const rightEdge = Math.max(a.maxX, b.maxX);
+
+            if (!bestPair || rightEdge > bestPair.rightEdge) {
+                bestPair = {
+                    rightEdge,
+                    centerY: (a.centerY + b.centerY) / 2,
+                };
+            }
+        }
+    }
+
+    if (!bestPair) return null;
+
+    return {
+        x: bestPair.rightEdge + 14,
+        y: bestPair.centerY,
+    };
+}
 
 function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -311,17 +376,25 @@ function redraw() {
         drawStroke(stroke);
     }
 
-    // Redraw the answer after the handwriting.
     if (inlineResult !== null) {
-    ctx.save();
-    ctx.fillStyle = "#4f46e5";
-    ctx.font = "600 24px sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`= ${inlineResult}`, 24, 60);
-    ctx.restore();
-}
-}
+        const position = findEqualsPosition();
 
+        if (position) {
+            ctx.save();
+            ctx.fillStyle = "#333333";
+            ctx.font = "400 36px sans-serif";
+            ctx.textBaseline = "middle";
+
+            ctx.fillText(
+                String(inlineResult),
+                position.x,
+                position.y
+            );
+
+            ctx.restore();
+        }
+    }
+}
 
 function resizeCanvas() {
     const rect = canvas.getBoundingClientRect();
