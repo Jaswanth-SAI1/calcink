@@ -18,11 +18,8 @@ const pixelEraserButton =
 const strokeWidthSlider =
     document.getElementById("strokeWidthSlider");
 
-const strokeWidthValue =
-    document.getElementById("strokeWidthValue");
-
 strokeWidthSlider.addEventListener("input", () => {
-    strokeWidthValue.textContent = `${strokeWidthSlider.value} px`;
+    currentStrokeWidth = Number(strokeWidthSlider.value);
 });
 
 const ctx = canvas.getContext("2d", {
@@ -39,8 +36,8 @@ let nextRequestId = 0;
 let modelReady = false;
 let recognitionPending = false;
 
-// Stores the answer to render beside the handwritten expression.
-let inlineResult = null;
+// Stores the answers to render beside the handwritten expressions.
+let inlineResults = [];
 let currentStrokeWidth = 3;
 let expressionSubmitted = false;
 let autoRecognitionTimer = null;
@@ -61,39 +58,41 @@ canvas.addEventListener("pointermove", continueStroke);
 canvas.addEventListener("pointerup", endStroke);
 canvas.addEventListener("pointercancel", cancelStroke);
 
+
+
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
-eraserButton.addEventListener("click", toggleEraser);
-clearButton.addEventListener("click",clearCanvas);
-pixelEraserButton.addEventListener(
-    "click",
-    togglePixelEraser
-);
+const drawButton = document.getElementById("drawButton");
 
-function toggleEraser() {
-    isErasing = !isErasing;
-
-    if (isErasing) {
-        isPixelErasing = false;
-
-        eraserButton.textContent = "Drawing";
-        pixelEraserButton.textContent = "Pixel Eraser";
-    } else {
-        eraserButton.textContent = "Eraser";
-    }
-}
+drawButton.addEventListener("click", () => setMode('draw'));
+eraserButton.addEventListener("click", () => setMode('erase-stroke'));
+pixelEraserButton.addEventListener("click", () => setMode('erase-pixel'));
+clearButton.addEventListener("click", clearCanvas);
 recognizeButton.addEventListener("click", requestRecognition);
 
-function togglePixelEraser() {
-    isPixelErasing = !isPixelErasing;
+let currentMode = 'draw';
 
-    if (isPixelErasing) {
-        isErasing = false;
-        pixelEraserButton.textContent = "Drawing";
-        eraserButton.textContent = "Eraser";
+function setMode(mode) {
+    currentMode = mode;
+    isErasing = (mode === 'erase-stroke');
+    isPixelErasing = (mode === 'erase-pixel');
+
+    drawButton.classList.toggle("active", mode === 'draw');
+    drawButton.setAttribute("aria-pressed", mode === 'draw');
+
+    eraserButton.classList.toggle("active", mode === 'erase-stroke');
+    eraserButton.setAttribute("aria-pressed", mode === 'erase-stroke');
+
+    pixelEraserButton.classList.toggle("active", mode === 'erase-pixel');
+    pixelEraserButton.setAttribute("aria-pressed", mode === 'erase-pixel');
+
+    if (mode === 'draw') {
+        canvas.classList.remove("eraser-mode");
     } else {
-        pixelEraserButton.textContent = "Pixel Eraser";
+        canvas.classList.add("eraser-mode");
     }
+
+    strokeWidthSlider.disabled = (mode === 'erase-stroke');
 }
 
 
@@ -137,30 +136,43 @@ function isPointNearSegment(point, start, end, radius) {
     return distanceToSegment(point, start, end) <= radius;
 }
 
+
 function erasePixelsAtPoint(point) {
-    const eraserRadius = 6;
+    // Make pixel eraser proportionally much larger so it's obvious to the user
+    const eraserRadius = Math.max(10, currentStrokeWidth * 3);
     const updatedStrokes = [];
     let changed = false;
 
     for (const stroke of strokes) {
         let currentFragment = [];
+        let strokeChanged = false;
+
+        if (stroke.length === 1) {
+            const distance = Math.hypot(point.x - stroke[0].x, point.y - stroke[0].y);
+            if (distance <= eraserRadius) {
+                changed = true;
+            } else {
+                updatedStrokes.push(stroke);
+            }
+            continue;
+        }
 
         for (let i = 0; i < stroke.length - 1; i++) {
             const start = stroke[i];
             const end = stroke[i + 1];
 
-            const segmentErased =
-                isPointNearSegment(
-                    point,
-                    start,
-                    end,
-                    eraserRadius
-                );
+            const segmentErased = isPointNearSegment(
+                point,
+                start,
+                end,
+                eraserRadius
+            );
 
             if (segmentErased) {
-                changed = true;
+                strokeChanged = true;
 
                 if (currentFragment.length >= 2) {
+                    currentFragment.lineWidth = stroke.lineWidth ?? 3;
                     updatedStrokes.push(currentFragment);
                 }
 
@@ -174,18 +186,26 @@ function erasePixelsAtPoint(point) {
             }
         }
 
-        if (currentFragment.length >= 2) {
-            updatedStrokes.push(currentFragment);
+        if (strokeChanged) {
+            changed = true;
+            if (currentFragment.length >= 2) {
+                currentFragment.lineWidth = stroke.lineWidth ?? 3;
+                updatedStrokes.push(currentFragment);
+            }
+        } else {
+            updatedStrokes.push(stroke);
         }
     }
 
-    strokes.length = 0;
-    strokes.push(...updatedStrokes);
-
-    redraw();
+    if (changed) {
+        strokes.length = 0;
+        strokes.push(...updatedStrokes);
+        redraw();
+    }
 
     return changed;
 }
+
 function eraseStrokeAtPoint(point) {
     const strokeIndex = findStrokeAtPoint(point);
 
@@ -211,7 +231,8 @@ function eraseStrokeAtPoint(point) {
     if (expressionSubmitted) {
         clearTimeout(autoRecognitionTimer);
 
-        if (looksLikeEqualsAtEnd()) {
+        const activeEq = getActiveEquation(strokes);
+        if (activeEq) {
             scheduleAutoRecognition();
         } else {
             expressionSubmitted = false;
@@ -257,9 +278,12 @@ function findStrokeAtPoint(point) {
 }
 
 function startStroke(event) {
+    console.log("startStroke fired");
     const point = getCanvasPoint(event);
 
     isPointerDown = true;
+    currentStrokeWidth = Number(strokeWidthSlider.value);
+
     if (isErasing) {
         eraseStrokeAtPoint(point);
         return;
@@ -277,9 +301,7 @@ function startStroke(event) {
         return;
     }
 
-    inlineResult = null;
     currentStroke = [];
-    currentStrokeWidth = Number(strokeWidthSlider.value);
 
     ctx.lineWidth = currentStrokeWidth;
     ctx.lineCap = "round";
@@ -308,25 +330,33 @@ function continueStroke(event) {
 function endStroke(event) {
     isPointerDown = false;
     if (isPixelErasing) {
-    if (pixelEraseBefore !== null && pixelEraseChanged) {
-        undoStack.push({
-            type: "pixelErase",
-            before: pixelEraseBefore,
-            after: strokes.slice()
-        });
+        if (pixelEraseBefore !== null && pixelEraseChanged) {
+            undoStack.push({
+                type: "pixelErase",
+                before: pixelEraseBefore,
+                after: strokes.slice()
+            });
 
-        redoStack.length = 0;
-    }
+            redoStack.length = 0;
 
-    pixelEraseBefore = null;
-    pixelEraseChanged = false;
+            const activeEq = getActiveEquation(strokes);
+            if (activeEq) {
+                expressionSubmitted = true;
+                scheduleAutoRecognition();
+            } else {
+                expressionSubmitted = false;
+            }
+        }
 
-    if (canvas.hasPointerCapture(event.pointerId)) {
-        canvas.releasePointerCapture(event.pointerId);
-    }
+        pixelEraseBefore = null;
+        pixelEraseChanged = false;
 
-    updateUndoRedoButtons();
-    return;
+        if (canvas.hasPointerCapture(event.pointerId)) {
+            canvas.releasePointerCapture(event.pointerId);
+        }
+
+        updateUndoRedoButtons();
+        return;
     }
 
     if (currentStroke.length === 0) return;
@@ -351,8 +381,19 @@ function endStroke(event) {
 
     updateUndoRedoButtons();
 
-    if (looksLikeEqualsAtEnd()) {
-        expressionSubmitted = true;
+    const activeEq = getActiveEquation(strokes);
+    if (activeEq) {
+        const lastStroke = strokes[strokes.length - 1];
+        const lastBounds = getStrokeBounds(lastStroke);
+        const dist = lastBounds ? Math.abs(lastBounds.centerY - activeEq.equalsPosition.y) : -1;
+        const thresh = Math.max(50, activeEq.gap * 4);
+        if (lastBounds && dist <= thresh) {
+            expressionSubmitted = true;
+        } else {
+            expressionSubmitted = false;
+        }
+    } else {
+        expressionSubmitted = false;
     }
 
     if (expressionSubmitted) {
@@ -363,60 +404,101 @@ function endStroke(event) {
 }
 
 
-function looksLikeEqualsAtEnd() {
-    if (strokes.length < 2) return false;
 
-    const lastTwo = strokes.slice(-2);
 
-    function getHorizontalLine(stroke) {
-        if (stroke.length < 2) return null;
-
-        const xs = stroke.map((point) => point.x);
-        const ys = stroke.map((point) => point.y);
-
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
-
-        const width = maxX - minX;
-        const height = maxY - minY;
-
-        if (width < 12 || height > Math.max(8, width * 0.25)) {
-            return null;
-        }
-
-        return {
-            minX,
-            maxX,
-            centerY: (minY + maxY) / 2,
-            width,
-        };
+function getStrokeBounds(stroke) {
+    if (stroke.length === 0) return null;
+    let minX = stroke[0].x, maxX = stroke[0].x, minY = stroke[0].y, maxY = stroke[0].y;
+    for (let i = 1; i < stroke.length; i++) {
+        const p = stroke[i];
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
     }
-
-    const first = getHorizontalLine(lastTwo[0]);
-    const second = getHorizontalLine(lastTwo[1]);
-
-    if (!first || !second) return false;
-
-    const verticalGap = Math.abs(first.centerY - second.centerY);
-    const overlap = Math.min(first.maxX, second.maxX)
-        - Math.max(first.minX, second.minX);
-
-    return (
-        verticalGap >= 3 &&
-        verticalGap <= 40 &&
-        overlap >= Math.min(first.width, second.width) * 0.5
-    );
+    return { minX, maxX, minY, maxY, centerY: (minY + maxY) / 2 };
 }
 
-
-function cancelStroke(event) {
-    currentStroke = [];
-
-    if (canvas.hasPointerCapture(event.pointerId)) {
-        canvas.releasePointerCapture(event.pointerId);
+function getAllEqualsSigns(strokes) {
+    const horizontalLines = [];
+    for (let i = 0; i < strokes.length; i++) {
+        const stroke = strokes[i];
+        if (stroke.length < 2) continue;
+        const bounds = getStrokeBounds(stroke);
+        const width = bounds.maxX - bounds.minX;
+        const height = bounds.maxY - bounds.minY;
+        if (width >= 10 && height <= Math.max(10, width * 0.5)) {
+            horizontalLines.push({ ...bounds, index: i, width, height });
+        }
     }
+
+    const equalsPairs = [];
+    for (let i = 0; i < horizontalLines.length; i++) {
+        for (let j = i + 1; j < horizontalLines.length; j++) {
+            const a = horizontalLines[i];
+            const b = horizontalLines[j];
+            const verticalGap = Math.abs(a.centerY - b.centerY);
+            const overlap = Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
+            
+            if (verticalGap >= 3 && verticalGap <= 80 && overlap >= Math.min(a.width, b.width) * 0.4) {
+                equalsPairs.push({
+                    rightEdge: Math.max(a.maxX, b.maxX),
+                    centerY: (a.centerY + b.centerY) / 2,
+                    gap: verticalGap,
+                    indices: [a.index, b.index]
+                });
+            }
+        }
+    }
+
+    return equalsPairs;
+}
+
+function getActiveEqualsSign(strokes) {
+    const equalsPairs = getAllEqualsSigns(strokes);
+
+    if (equalsPairs.length === 0) return null;
+
+    const lastStroke = strokes[strokes.length - 1];
+    if (lastStroke) {
+        const lastBounds = getStrokeBounds(lastStroke);
+        if (lastBounds) {
+            equalsPairs.sort((a, b) => {
+                const distA = Math.abs(a.centerY - lastBounds.centerY);
+                const distB = Math.abs(b.centerY - lastBounds.centerY);
+                return distA - distB;
+            });
+        }
+    }
+    return equalsPairs[0];
+}
+
+function getActiveEquation(strokes) {
+    const eq = getActiveEqualsSign(strokes);
+    if (!eq) return null;
+    
+    const verticalTolerance = Math.max(30, eq.gap * 2.5);
+    
+    const equationStrokes = [];
+    for (const stroke of strokes) {
+        const bounds = getStrokeBounds(stroke);
+        if (!bounds) continue;
+        
+        const strokeTop = bounds.minY;
+        const strokeBottom = bounds.maxY;
+        const eqTop = eq.centerY - verticalTolerance;
+        const eqBottom = eq.centerY + verticalTolerance;
+        
+        if (strokeBottom >= eqTop && strokeTop <= eqBottom) {
+            equationStrokes.push(stroke);
+        }
+    }
+    
+    return {
+        strokes: equationStrokes,
+        gap: eq.gap,
+        equalsPosition: { x: eq.rightEdge + 14, y: eq.centerY }
+    };
 }
 
 function drawCurrentStroke() {
@@ -458,71 +540,7 @@ function drawStroke(stroke) {
     ctx.restore();
 }
 
-function findEqualsPosition() {
-    const horizontalLines = [];
 
-    for (let i = 0; i < strokes.length; i++) {
-        const stroke = strokes[i];
-        if (stroke.length < 2) continue;
-
-        const xs = stroke.map((p) => p.x);
-        const ys = stroke.map((p) => p.y);
-
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
-
-        const width = maxX - minX;
-        const height = maxY - minY;
-
-        if (width >= 12 && height <= Math.max(8, width * 0.25)) {
-            horizontalLines.push({
-                minX,
-                maxX,
-                centerY: (minY + maxY) / 2,
-                width,
-            });
-        }
-    }
-
-    let bestPair = null;
-
-    for (let i = 0; i < horizontalLines.length; i++) {
-        for (let j = i + 1; j < horizontalLines.length; j++) {
-            const a = horizontalLines[i];
-            const b = horizontalLines[j];
-
-            const verticalGap = Math.abs(a.centerY - b.centerY);
-            const overlap =
-                Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
-
-            if (
-                verticalGap < 3 ||
-                verticalGap > 40 ||
-                overlap < Math.min(a.width, b.width) * 0.5
-            ) {
-                continue;
-            }
-
-            const rightEdge = Math.max(a.maxX, b.maxX);
-
-            if (!bestPair || rightEdge > bestPair.rightEdge) {
-                bestPair = {
-                    rightEdge,
-                    centerY: (a.centerY + b.centerY) / 2,
-                };
-            }
-        }
-    }
-
-    if (!bestPair) return null;
-
-    return {
-        x: bestPair.rightEdge + 14,
-        y: bestPair.centerY,
-    };
-}
 
 function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -531,24 +549,28 @@ function redraw() {
         drawStroke(stroke);
     }
 
-    if (inlineResult !== null) {
-        const position = findEqualsPosition();
+    const allEqs = getAllEqualsSigns(strokes);
+    const validResults = [];
 
-        if (position) {
+    for (const res of inlineResults) {
+        // Check if there is still an equals sign near this result's position
+        const matchesEq = allEqs.some(eq => {
+            const eqX = eq.rightEdge + 14;
+            const eqY = eq.centerY;
+            return Math.abs(res.x - eqX) < 40 && Math.abs(res.y - eqY) < 40;
+        });
+
+        if (matchesEq) {
+            validResults.push(res);
             ctx.save();
             ctx.fillStyle = "#333333";
             ctx.font = "400 36px sans-serif";
             ctx.textBaseline = "middle";
-
-            ctx.fillText(
-                String(inlineResult),
-                position.x,
-                position.y
-            );
-
+            ctx.fillText(String(res.value), res.x, res.y);
             ctx.restore();
         }
     }
+    inlineResults = validResults;
 }
 
 function resizeCanvas() {
@@ -579,7 +601,7 @@ function clearCanvas() {
     undoStack.length = 0;
     redoStack.length = 0;
 
-    inlineResult = null;
+    inlineResults = [];
 
     isPointerDown = false;
     pixelEraseBefore = null;
@@ -667,8 +689,10 @@ function updateUndoRedoButtons() {
 
 updateUndoRedoButtons();
 
-function requestRecognition() {
+
+async function requestRecognition() {
     if (currentStroke.length > 0) return;
+
     if (!modelReady) {
         output.textContent = "Please wait for the model to load.";
         return;
@@ -684,7 +708,13 @@ function requestRecognition() {
         return;
     }
 
-    const inkOnStrokes = strokes.map((stroke) => ({
+    const activeEq = getActiveEquation(strokes);
+    if (!activeEq) {
+        output.textContent = "Please draw a valid equals sign (=).";
+        return;
+    }
+
+    const inkOnStrokes = activeEq.strokes.map((stroke) => ({
         points: stroke,
         lineWidth: stroke.lineWidth ?? 3,
     }));
@@ -695,12 +725,15 @@ function requestRecognition() {
     }
 
     try {
-        const input = preprocessStrokes(inkOnStrokes);
         const requestId = ++nextRequestId;
-
         recognitionPending = true;
         recognizeButton.disabled = true;
         output.textContent = "Recognizing expression...";
+
+        // Yield to allow the browser to paint the stroke before the heavy preprocess operation
+        await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+
+        const input = preprocessStrokes(inkOnStrokes);
 
         recognitionWorker.postMessage({
             type: "RECOGNIZE",
@@ -715,6 +748,7 @@ function requestRecognition() {
         output.textContent = `Preprocessing error: ${error.message}`;
     }
 }
+
 
 recognitionWorker.onmessage = (event) => {
     const result = event.data;
@@ -760,13 +794,35 @@ recognitionWorker.onmessage = (event) => {
         try {
             const expression = result.expression.trim().replace(/=+$/, "").trim();
             const evaluation = evaluateExpression(expression);
-            inlineResult = evaluation.result;
+            
+            const activeEq = getActiveEquation(strokes);
+            if (activeEq) {
+                const eqPos = activeEq.equalsPosition;
+                // Remove old result for this equation
+                inlineResults = inlineResults.filter(r => 
+                    !(Math.abs(r.x - eqPos.x) < 40 && Math.abs(r.y - eqPos.y) < 40)
+                );
+                
+                // Add new result
+                inlineResults.push({
+                    x: eqPos.x,
+                    y: eqPos.y,
+                    value: evaluation.result
+                });
+            }
+            
             redraw();
             output.textContent =
                 `Recognized: ${evaluation.normalized} = ${evaluation.result} | ` +
                 `Inference: ${inferenceMs} ms`;
         } catch (error) {
-            inlineResult = null;
+            const activeEq = getActiveEquation(strokes);
+            if (activeEq) {
+                const eqPos = activeEq.equalsPosition;
+                inlineResults = inlineResults.filter(r => 
+                    !(Math.abs(r.x - eqPos.x) < 40 && Math.abs(r.y - eqPos.y) < 40)
+                );
+            }
             redraw();
             output.textContent =
                 `Recognized: ${result.expression} | ` +
