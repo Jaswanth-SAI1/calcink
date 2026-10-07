@@ -2,6 +2,12 @@
 
 CalcInk is a browser-based application for recognizing handwritten mathematical expressions and calculating their results. It uses a pretrained handwriting-recognition model and performs inference locally in the browser after the required model assets have loaded.
 
+
+## Live Demo
+
+https://calcink-bitraiders.vercel.app/
+
+
 ## Features
 
 - **Handwriting input:** Draw mathematical expressions using a mouse or a supported touch/stylus input device.
